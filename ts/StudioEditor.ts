@@ -31,10 +31,20 @@ export function saveContext(
     formatValue: () => string,
 ): [Node, () => void, () => void] {
     const pre = document.createElement('pre');
-    pre.classList.add('m-0');
+    pre.classList.add('m-0', 'editable-value');
     pre.textContent = formatValue();
-    pre.addEventListener('click', () => {
+    pre.title = 'Click to edit';
+    pre.tabIndex = 0;
+    pre.setAttribute('role', 'button');
+    const open = () => {
         pre.parentElement?.replaceChildren(div);
+        div.querySelector<HTMLElement>('input, select, textarea')?.focus();
+    };
+    pre.addEventListener('click', open);
+    pre.addEventListener('keydown', (event: KeyboardEvent) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        open();
     });
     // Save
     const btnSave = document.createElement('button');
