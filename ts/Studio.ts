@@ -9,13 +9,14 @@ import {
     hasCargoLimits,
     isCargoType,
 } from './frames';
-import {Frame, NumericFrameState, Quadruplet, Railroad, SplineType} from './Railroad';
+import {Frame, NumericFrameState, Prop, Quadruplet, Railroad, SplineType} from './Railroad';
 import {GvasString, GvasText, gvasToString} from './Gvas';
 import {
     IndustryName,
     IndustryType,
     getIndustryName,
     industryInputLabels,
+    industryNames,
     industryOutputLabels,
 } from './industries';
 import {
@@ -36,6 +37,7 @@ import {
 } from './StudioEditor';
 import {MapLayers, RailroadMap} from './RailroadMap';
 import {SectionHandler, SectionKey, Sidebar, showDownloadNotice} from './StudioShell';
+import {SortState, sortRows, sortableHeader} from './TableSort';
 import {cubicBezierMinRadius, hermiteToBezier} from './util-bezier';
 import {gvasToBlob, railroadToGvas} from './exporter';
 import {Quaternion} from './Quaternion';
@@ -56,6 +58,29 @@ import {textToString} from './util';
 const OLDEST_TESTED_SAVE_GAME_VERSION = 1;
 const NEWEST_TESTED_SAVE_GAME_VERSION = 231117;
 const INVERT_BEFORE_SAVE_GAME_VERSION = 231117;
+
+/** A prop, with its position in the save file. */
+type PropRow = {
+    index: number;
+    prop: Prop;
+};
+
+type OnSort = (next: SortState | undefined) => void;
+
+/**
+ * Read a text property for sorting or searching. Text in a format the editor
+ * does not understand counts as blank.
+ * @param {GvasText} text
+ * @return {GvasString}
+ */
+function plainText(text: GvasText): GvasString {
+    try {
+        return textToString(text);
+    } catch (e) {
+        console.log(e);
+        return null;
+    }
+}
 
 /**
  * Web UI for editing a Railroad object.
@@ -96,7 +121,12 @@ export class Studio {
         header.textContent = 'Loaded ' + this.filename;
         // Every page puts its controls in the header bar and its body in the content area
         const show = (controls: (Element | undefined)[], body: Element) => {
-            studioControls.replaceChildren(...controls.filter(Boolean));
+            // Controls that are already in place are left alone, so a search box keeps focus as its results change
+            const next = controls.filter(Boolean);
+            let kept = 0;
+            while (kept < next.length && studioControls.children[kept] === next[kept]) kept++;
+            while (studioControls.children.length > kept) studioControls.lastElementChild?.remove();
+            studioControls.append(...next.slice(kept));
             this.mapShowing = body === mapDiv;
             content.classList.toggle('is-map', this.mapShowing);
             content.replaceChildren(body);
@@ -176,6 +206,20 @@ export class Studio {
         }
         // Frames
         let framePage = 0;
+        let frameSort: SortState | undefined;
+        const frameSortColumns = {
+            name: (f: Frame) => plainText(f.name),
+            number: (f: Frame) => plainText(f.number),
+            type: (f: Frame) => {
+                const frameType = getFrameType(f.type);
+                return frameType === null ? f.type : frameDefinitions[frameType].name;
+            },
+        };
+        const onFrameSort: OnSort = (next) => {
+            frameSort = next;
+            framePage = 0;
+            resetFramePage();
+        };
         const onFramePage = (page: number) => {
             framePage = page;
             resetFramePage();
@@ -247,9 +291,10 @@ export class Studio {
             // Create a dropdown entry for all
             options.unshift(['all', `All (${filteredCategory.length})`]);
             const filterNav = createFilter(categories, labels, onFrameFilter, options, onOption, checked, frameSelect);
-            const filtered = (frameSelect && frameSelect !== 'all') ?
+            const selected = (frameSelect && frameSelect !== 'all') ?
                 filteredCategory.filter((f) => f.type === frameSelect || getFrameType(f.type) === frameSelect) :
                 filteredCategory;
+            const filtered = sortRows(selected, frameSort, frameSortColumns);
             const numPages = Math.ceil(filtered.length / pageSize);
             framePage = clamp(framePage, 0, numPages - 1);
             const framesNav = createPager(framePage, filtered.length, onFramePage, pageSize);
@@ -258,7 +303,7 @@ export class Studio {
             show([filterNav, framesNav], table);
             const first = pageSize * framePage;
             const last = Math.min(filtered.length, first + pageSize) - 1;
-            this.frames(table, first, last, filtered);
+            this.frames(table, first, last, filtered, frameSort, onFrameSort);
         };
         // Bulk Frames
         const showBulkFrames = () => {
@@ -267,11 +312,15 @@ export class Studio {
             this.bulkFrames(div);
         };
         // Industries
+        let industrySort: SortState | undefined;
         const showIndustries = () => {
             const table = document.createElement('table');
             table.classList.add('table', 'table-striped');
             show([], table);
-            this.industries(table);
+            this.industries(table, industrySort, (next) => {
+                industrySort = next;
+                showIndustries();
+            });
         };
         // Players
         const showPlayers = () => {
@@ -282,20 +331,52 @@ export class Studio {
         };
         // Props
         let propPage = 0;
+        let propSort: SortState | undefined;
+        const propSortColumns = {
+            id: (row: PropRow) => row.index,
+            name: (row: PropRow) => row.prop.name,
+        };
+        const propSearch = document.createElement('input');
+        propSearch.type = 'search';
+        propSearch.classList.add('form-control', 'table-search');
+        propSearch.placeholder = 'Filter by name, text or ID';
+        propSearch.setAttribute('aria-label', propSearch.placeholder);
+        const propCount = document.createElement('span');
+        propCount.classList.add('table-count');
+        propCount.setAttribute('role', 'status');
         const resetPropPage = () => {
             const pageSize = 20;
             const onPage = (page: number): void => {
                 propPage = page;
                 resetPropPage();
             };
-            const propNav = createPager(propPage, railroad.props.length, onPage, pageSize);
+            // A number finds the prop with that ID as well as any name or text containing it
+            const query = propSearch.value.trim().toLowerCase();
+            const queryId = /^\d+$/.test(query) ? Number(query) : undefined;
+            const all: PropRow[] = railroad.props.map((prop, index) => ({index, prop}));
+            const matching = query === '' ? all : all.filter(({index, prop}) =>
+                index === queryId ||
+                (prop.name ?? '').toLowerCase().includes(query) ||
+                (plainText(prop.text) ?? '').toLowerCase().includes(query));
+            const rows = sortRows(matching, propSort, propSortColumns);
+            propPage = clamp(propPage, 0, Math.max(0, Math.ceil(rows.length / pageSize) - 1));
+            const propNav = createPager(propPage, rows.length, onPage, pageSize);
+            propCount.textContent = query === '' ? '' :
+                `${rows.length.toLocaleString('en-US')} of ${all.length.toLocaleString('en-US')}`;
             const table = document.createElement('table');
             table.classList.add('table', 'table-striped');
-            show([propNav], table);
+            show([propSearch, propCount, propNav], table);
             const first = pageSize * propPage;
-            const last = Math.min(railroad.props.length, first + pageSize) - 1;
-            this.props(table, first, last);
+            this.props(table, rows.slice(first, first + pageSize), propSort, (next) => {
+                propSort = next;
+                propPage = 0;
+                resetPropPage();
+            });
         };
+        propSearch.addEventListener('input', () => {
+            propPage = 0;
+            resetPropPage();
+        });
         // Spline Tracks
         let splineTrackPage = 0;
         const resetSplineTrackPage = () => {
@@ -1208,7 +1289,14 @@ export class Studio {
         }
     }
 
-    private frames(table: HTMLTableElement, first: number, last: number, filtered: Frame[]): void {
+    private frames(
+        table: HTMLTableElement,
+        first: number,
+        last: number,
+        filtered: Frame[],
+        sort: SortState | undefined,
+        onSort: OnSort,
+    ): void {
         this.setTitle('Frames');
         const thead = document.createElement('thead');
         table.appendChild(thead);
@@ -1217,7 +1305,11 @@ export class Studio {
         ['Type', 'Name', 'Number', 'State'].forEach((columnHeader, i) => {
             const th = document.createElement('th');
             th.classList.add((i < 3) ? 'col-1' : 'col-auto');
-            th.textContent = columnHeader;
+            if (i < 3) {
+                sortableHeader(th, columnHeader, columnHeader.toLowerCase(), sort, onSort);
+            } else {
+                th.textContent = columnHeader;
+            }
             tr.appendChild(th);
         });
         const tbody = document.createElement('tbody');
@@ -1563,7 +1655,7 @@ export class Studio {
         innerDiv.appendChild(btnFillWater);
     }
 
-    private industries(table: HTMLTableElement): void {
+    private industries(table: HTMLTableElement, sort: SortState | undefined, onSort: OnSort): void {
         this.setTitle('Industries');
         const thead = document.createElement('thead');
         table.appendChild(thead);
@@ -1571,12 +1663,22 @@ export class Studio {
         thead.appendChild(tr);
         for (const columnHeader of ['Industry Type', 'Inputs', 'Outputs', 'Location', 'Rotation']) {
             const th = document.createElement('th');
-            th.textContent = columnHeader;
+            if (columnHeader === 'Industry Type') {
+                sortableHeader(th, columnHeader, 'type', sort, onSort);
+            } else {
+                th.textContent = columnHeader;
+            }
             tr.appendChild(th);
         }
         const tbody = document.createElement('tbody');
         table.appendChild(tbody);
-        for (const industry of this.railroad.industries) {
+        const industries = sortRows(this.railroad.industries, sort, {
+            type: (industry) => {
+                const name = getIndustryName(industry);
+                return name === null ? String(industry.type) : industryNames[name];
+            },
+        });
+        for (const industry of industries) {
             tr = document.createElement('tr');
             tbody.appendChild(tr);
             // Industry type
@@ -1640,21 +1742,34 @@ export class Studio {
         }
     }
 
-    private props(table: HTMLTableElement, first: number, last: number): void {
+    private props(table: HTMLTableElement, rows: PropRow[], sort: SortState | undefined, onSort: OnSort): void {
         this.setTitle('Props');
         const thead = document.createElement('thead');
         table.appendChild(thead);
         let tr = document.createElement('tr');
         thead.appendChild(tr);
-        for (const columnHeader of ['ID', 'Name', 'Text', 'Location', 'Rotation', 'Scale']) {
+        const columnHeaders = ['ID', 'Name', 'Text', 'Location', 'Rotation', 'Scale'];
+        columnHeaders.forEach((columnHeader, i) => {
             const th = document.createElement('th');
-            th.textContent = columnHeader;
+            if (i < 2) {
+                sortableHeader(th, columnHeader, columnHeader.toLowerCase(), sort, onSort);
+            } else {
+                th.textContent = columnHeader;
+            }
             tr.appendChild(th);
-        }
+        });
         const tbody = document.createElement('tbody');
         table.appendChild(tbody);
-        for (let idx = first; idx <= last; idx++) {
-            const prop = this.railroad.props[idx];
+        if (rows.length === 0) {
+            tr = document.createElement('tr');
+            const td = document.createElement('td');
+            td.colSpan = columnHeaders.length;
+            td.classList.add('text-body-secondary');
+            td.textContent = 'No props match that filter.';
+            tr.appendChild(td);
+            tbody.appendChild(tr);
+        }
+        for (const {index: idx, prop} of rows) {
             tr = document.createElement('tr');
             tbody.appendChild(tr);
             // ID

@@ -487,6 +487,54 @@ body.sidebar-collapsed {
   max-width: 100%;
 }
 
+/* Column headings that sort the table when clicked */
+
+.sort-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.sort-button .bi {
+  font-size: 0.8em;
+  opacity: 0.45;
+}
+
+.sort-button:hover .bi,
+.sort-button:focus-visible .bi {
+  opacity: 1;
+}
+
+.sort-button.active .bi {
+  color: var(--bs-primary);
+  opacity: 1;
+}
+
+.table-search {
+  width: 16rem;
+  max-width: 100%;
+}
+
+.table-count {
+  color: var(--bs-secondary-color);
+  font-size: 0.9rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.table-count:empty {
+  display: none;
+}
+
+.player-sort {
+  width: auto;
+}
+
 /* Values in the editor tables that open an edit control when clicked */
 
 .editable-value {

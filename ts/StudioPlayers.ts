@@ -1,4 +1,5 @@
 import {Permission, permissionLabels} from './Permission';
+import {SortState, sortRows} from './TableSort';
 import {el, icon, iconButton} from './dom';
 import {Player} from './Railroad';
 import {Studio} from './Studio';
@@ -54,6 +55,29 @@ type Snapshot = {
 
 /** The values each player had when the save was loaded, used for undo and for the "Edited" badge. */
 const snapshots = new WeakMap<Player, Snapshot>();
+
+/** How the cards are ordered. Kept between visits to the page. */
+let playerSort: SortState | undefined;
+
+const playerSortOptions: [string, string][] = [
+    ['', 'Save order'],
+    ['name', 'Name'],
+    ['id', 'Steam ID'],
+    ['money', 'Money'],
+    ['xp', 'XP'],
+];
+
+type PlayerRow = {
+    card: Card;
+    player: Player;
+};
+
+const playerSortColumns = {
+    id: (row: PlayerRow) => row.player.id,
+    money: (row: PlayerRow) => row.player.money,
+    name: (row: PlayerRow) => row.player.name,
+    xp: (row: PlayerRow) => row.player.xp,
+};
 
 type Card = {
     element: HTMLElement;
@@ -481,6 +505,48 @@ export function renderPlayers(studio: Studio, container: HTMLElement): void {
         summary.classList.toggle('d-none', editedCount === 0);
         summaryText.textContent = `${plural(editedCount, 'player')} edited`;
     };
+    // Order. The cards only move when this is changed, not while a value is being typed.
+    const grid = el('div', 'row row-cols-1 row-cols-lg-2 row-cols-xxl-3 g-3');
+    const applySort = () => {
+        const rows: PlayerRow[] = players.map((player, i) => ({card: cards[i], player}));
+        grid.append(...sortRows(rows, playerSort, playerSortColumns).map((row) => row.card.element));
+    };
+    if (players.length > 1) {
+        const sortGroup = el('div', 'input-group input-group-sm player-sort');
+        const sortLabel = el('label', 'input-group-text', 'Sort');
+        const sortSelect = el('select', 'form-select');
+        sortSelect.id = uniqueId('player-sort');
+        sortLabel.htmlFor = sortSelect.id;
+        for (const [value, text] of playerSortOptions) {
+            const option = el('option', '', text);
+            option.value = value;
+            sortSelect.append(option);
+        }
+        const direction = el('button', 'btn btn-quiet');
+        direction.type = 'button';
+        const syncSort = () => {
+            sortSelect.value = playerSort?.column ?? '';
+            direction.disabled = !playerSort;
+            direction.replaceChildren(icon(playerSort?.descending ? 'bi-sort-down' : 'bi-sort-up'));
+            direction.title = playerSort?.descending ? 'Descending. Click for ascending.' :
+                'Ascending. Click for descending.';
+            direction.setAttribute('aria-label', direction.title);
+        };
+        sortSelect.addEventListener('change', () => {
+            playerSort = sortSelect.value ? {column: sortSelect.value, descending: false} : undefined;
+            syncSort();
+            applySort();
+        });
+        direction.addEventListener('click', () => {
+            if (!playerSort) return;
+            playerSort = {column: playerSort.column, descending: !playerSort.descending};
+            syncSort();
+            applySort();
+        });
+        syncSort();
+        sortGroup.append(sortLabel, sortSelect, direction);
+        intro.append(sortGroup);
+    }
     const noMatches = el('div', 'text-body-secondary d-none', 'No players match that search.');
     if (players.length > SEARCH_THRESHOLD) {
         const search = el('input', 'form-control player-search');
@@ -508,8 +574,7 @@ export function renderPlayers(studio: Studio, container: HTMLElement): void {
         }));
     }
     // Cards
-    const grid = el('div', 'row row-cols-1 row-cols-lg-2 row-cols-xxl-3 g-3');
-    grid.append(...cards.map((card) => card.element));
+    applySort();
     page.append(grid, noMatches);
     cards.forEach((card) => card.sync(true));
     syncSummary();
