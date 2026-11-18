@@ -38,7 +38,10 @@ export function saveContext(
     pre.setAttribute('role', 'button');
     const open = () => {
         pre.parentElement?.replaceChildren(div);
-        div.querySelector<HTMLElement>('input, select, textarea')?.focus();
+        // Start in the value itself, rather than in a checkbox that sits in front of it
+        const field = div.querySelector<HTMLElement>('input:not([type=checkbox]), select, textarea') ??
+            div.querySelector<HTMLElement>('input');
+        field?.focus();
     };
     pre.addEventListener('click', open);
     pre.addEventListener('keydown', (event: KeyboardEvent) => {
