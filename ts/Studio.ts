@@ -769,7 +769,9 @@ export class Studio {
             btn.textContent = `${text} (${extension.toUpperCase()})`;
             btn.addEventListener('click', () => {
                 this.setMapTitle('Making the image...');
-                const background = getComputedStyle(document.body).backgroundColor;
+                // The theme's own colour, not the page's, which is in between colours while the theme changes
+                const background = getComputedStyle(document.documentElement).getPropertyValue('--bs-body-bg').trim() ||
+                    getComputedStyle(document.body).backgroundColor;
                 mapImage(this.map.getSvgNode(), {background, kind, size})
                     .then((blob) => {
                         downloadBlob(blob, `${base}-map.${extension}`);
