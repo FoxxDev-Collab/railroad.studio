@@ -33,3 +33,19 @@ export function iconButton(className: string, iconName: string, text: string): H
     button.append(icon(iconName), ' ' + text);
     return button;
 }
+
+/**
+ * Hand a file to the browser as a download.
+ * @param {Blob} blob
+ * @param {string} filename
+ */
+export function downloadBlob(blob: Blob, filename: string): void {
+    const url = URL.createObjectURL(blob);
+    const a = el('a');
+    a.href = url;
+    a.download = filename;
+    document.body.append(a);
+    a.click();
+    URL.revokeObjectURL(url);
+    a.remove();
+}

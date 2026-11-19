@@ -35,6 +35,8 @@ export type SectionHandler = {
 export type SaveState = 'none' | 'clean' | 'unsaved' | 'downloaded';
 
 export type Sidebar = {
+    /** Update the number shown beside a section, after its contents change. */
+    setCount: (key: SectionKey, count: number) => void;
     /** Show which file is open, or that none is. */
     setFile: (name: string | undefined, detail: string, busy?: boolean) => void;
     setSaveState: (state: SaveState) => void;
@@ -183,6 +185,12 @@ export function mountSidebar(): Sidebar {
             }
         }
     };
+    const setCount = (key: SectionKey, count: number) => {
+        const handler = handlers[key];
+        if (!handler) return;
+        handler.count = count;
+        syncSections(true);
+    };
     // Save state and download
     const foot = el('div', 'sidebar-foot');
     const state = el('div', 'sidebar-state small');
@@ -235,7 +243,7 @@ export function mountSidebar(): Sidebar {
     select(open);
     setSaveState('none');
     element.replaceChildren(head, file, list, foot);
-    return {setFile, setSaveState, setSections};
+    return {setCount, setFile, setSaveState, setSections};
 }
 
 /**

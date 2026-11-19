@@ -306,6 +306,11 @@ export class RailroadMap {
         this.panZoom.resize();
     }
 
+    /** The map cannot be refreshed while it is still drawing. */
+    isRendering(): boolean {
+        return this.renderLock;
+    }
+
     refresh() {
         const pan = this.panZoom.getPan();
         const zoom = this.panZoom.getZoom();

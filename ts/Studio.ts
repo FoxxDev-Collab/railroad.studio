@@ -50,7 +50,9 @@ import {catmullRomToHermite} from './util-catmullrom';
 import {clamp} from './math';
 import {createFilter} from './Filter';
 import {createPager} from './Pager';
+import {downloadBlob} from './dom';
 import {handleError} from './index';
+import {renderFrameTransfer} from './StudioFrames';
 import {renderPlayers} from './StudioPlayers';
 import {simplifySplines} from './splines';
 import {textToString} from './util';
@@ -89,6 +91,7 @@ export class Studio {
     private modified: boolean;
     private unsaved = false;
     private mapShowing = true;
+    private mapStale = false;
     private mapTitle = 'Map';
     private readonly filename: string;
     private readonly header: HTMLHeadingElement;
@@ -138,6 +141,7 @@ export class Studio {
         const showMap = () => {
             show([mapButtons], mapDiv);
             this.setTitle(this.mapTitle);
+            if (this.mapStale) this.refreshMap();
         };
         content.classList.add('is-map');
         content.replaceChildren(mapDiv);
@@ -230,36 +234,39 @@ export class Studio {
             if (frameType === null) return false;
             return (frameDefinitions[frameType][c] ?? false);
         };
-        const numFramesWithUnknownTypes = railroad.frames
-            .filter((f) => getFrameType(f.type) === null)
-            .length;
-        const labels: Record<string, string> = {
-            engine: `Engines (${railroad.frames.filter((f) => frameInCategory(f, 'engine')).length})`,
-            freight: `Freight (${railroad.frames.filter((f) => frameInCategory(f, 'freight')).length})`,
-            handcar: `Handcars (${railroad.frames.filter((f) => frameInCategory(f, 'handcar')).length})`,
-            mow: `Maintenance (${railroad.frames.filter((f) => frameInCategory(f, 'mow')).length})`,
-            passenger: `Passenger (${railroad.frames.filter((f) => frameInCategory(f, 'passenger')).length})`,
-            tender: `Tenders (${railroad.frames.filter((f) => frameInCategory(f, 'tender')).length})`,
-        };
-        const anyInCategory = (c: typeof frameCategories[number]): boolean =>
-            railroad.frames.some((f) => frameInCategory(f, c));
-        const checked = Object.fromEntries(frameCategories.map((c) => [c, anyInCategory(c)]));
+        // Which categories exist can change (frames can be imported), so the filter is rebuilt on each visit.
+        // This only remembers the categories that have been unticked.
+        const checked: Record<string, boolean> = {};
         const onFrameFilter = (category: typeof frameCategories[number] | 'unknown', value: boolean): void => {
             checked[category] = value;
             resetFramePage();
         };
-        const categories: (typeof frameCategories[number] | 'unknown')[] = frameCategories.filter(anyInCategory);
         let frameSelect = 'all';
         const onOption = (value: string) => {
             frameSelect = value;
             resetFramePage();
         };
-        if (numFramesWithUnknownTypes > 0) {
-            labels['unknown'] = `Unknown (${numFramesWithUnknownTypes})`;
-            checked['unknown'] = true;
-            categories.push('unknown');
-        }
         const resetFramePage = () => {
+            const countIn = (c: typeof frameCategories[number] | 'unknown') =>
+                railroad.frames.filter((f) => frameInCategory(f, c)).length;
+            const numFramesWithUnknownTypes = countIn('unknown');
+            const labels: Record<string, string> = {
+                engine: `Engines (${countIn('engine')})`,
+                freight: `Freight (${countIn('freight')})`,
+                handcar: `Handcars (${countIn('handcar')})`,
+                mow: `Maintenance (${countIn('mow')})`,
+                passenger: `Passenger (${countIn('passenger')})`,
+                tender: `Tenders (${countIn('tender')})`,
+            };
+            const categories: (typeof frameCategories[number] | 'unknown')[] =
+                frameCategories.filter((c) => countIn(c) > 0);
+            if (numFramesWithUnknownTypes > 0) {
+                labels['unknown'] = `Unknown (${numFramesWithUnknownTypes})`;
+                categories.push('unknown');
+            }
+            for (const c of categories) {
+                if (typeof checked[c] === 'undefined') checked[c] = true;
+            }
             const displayUnknownFrameTypes = numFramesWithUnknownTypes > 0 && checked['unknown'];
             const pageSize = 20;
             const filteredCategory = railroad.frames.filter((f) => {
@@ -395,10 +402,9 @@ export class Studio {
         };
         // Sidebar
         const sections: Partial<Record<SectionKey, SectionHandler>> = {map: {onSelect: showMap}};
-        if (hasFrames) {
-            sections.frames = {count: railroad.frames.length, onSelect: resetFramePage};
-            sections.bulkFrames = {onSelect: showBulkFrames};
-        }
+        // Frames can be imported, so these two are there even when the save has none
+        sections.frames = {count: railroad.frames.length, onSelect: resetFramePage};
+        sections.bulkFrames = {onSelect: showBulkFrames};
         if (hasIndustries) {
             sections.industries = {count: railroad.industries.length, onSelect: showIndustries};
         }
@@ -1101,21 +1107,51 @@ export class Studio {
         const gvas = railroadToGvas(this.railroad);
         console.log('Exported', gvas);
         const blob = gvasToBlob(gvas);
-        const url = URL.createObjectURL(blob);
         console.log('Serialized', blob);
         const filename = this.exportFileName();
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.append(a);
-        a.click();
-        window.URL.revokeObjectURL(url);
-        a.remove();
+        downloadBlob(blob, filename);
         this.unsaved = false;
         document.title = this.filename + ' - Railroad Studio';
         this.sidebar.setSaveState('downloaded');
         showDownloadNotice(filename, this.originalFilename);
         return filename;
+    }
+
+    /**
+     * Swap in a different list of frames, for example one that was imported.
+     * The save is written out in memory first, and if that fails with the new
+     * frames then nothing is changed.
+     * @param {Frame[]} frames
+     * @throws {Error} if the save could not be written with these frames.
+     */
+    replaceFrames(frames: Frame[]): void {
+        const before = this.railroad.frames;
+        this.railroad.frames = frames;
+        try {
+            gvasToBlob(railroadToGvas(this.railroad));
+        } catch (e) {
+            this.railroad.frames = before;
+            throw e;
+        }
+        this.sidebar.setCount('frames', frames.length);
+        this.setMapModified();
+        this.refreshMap();
+    }
+
+    /**
+     * Redraw the map from the railroad. The map can only be redrawn while it
+     * is on screen and not already drawing, so this waits for both: opening
+     * the map picks up a redraw that was asked for from another page.
+     */
+    private refreshMap(): void {
+        if (!this.mapShowing) {
+            this.mapStale = true;
+        } else if (this.map.isRendering()) {
+            window.setTimeout(() => this.refreshMap(), 250);
+        } else {
+            this.mapStale = false;
+            this.map.refresh();
+        }
     }
 
     private exportFileName() {
@@ -1657,6 +1693,8 @@ export class Studio {
         innerDiv.classList.add('col-2');
         div.appendChild(innerDiv);
         innerDiv.appendChild(btnFillWater);
+
+        renderFrameTransfer(this, outerDiv);
     }
 
     private industries(table: HTMLTableElement, sort: SortState | undefined, onSort: OnSort): void {
