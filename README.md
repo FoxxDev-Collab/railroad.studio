@@ -29,6 +29,21 @@ have changes that have not been downloaded yet, and holds the Download button.
   set for every player at once.
 - The **Spline Track Editor** provides access to the properties of the
   spline track system.
+- **Bulk Frames** can export every frame as JSON, import such a file again
+  (replacing the frames in the save or adding to them), and remove all frames.
+- Tables sort by clicking a column heading, and props can be filtered by name,
+  text or ID.
+
+On the map:
+
+- The **Edit** tool opens a panel for the industry you click. With the
+  **Prop IDs** layer switched on, which labels every prop with its ID and name,
+  it does the same for props.
+- The **Image** menu saves a picture of what is on screen, or of the whole map,
+  as a PNG or an SVG.
+
+Changes can be undone and redone with the buttons in the sidebar, or with
+Ctrl+Z and Ctrl+Y. Press `?` for the full list of keyboard shortcuts.
 
 ## Editing save files (advanced)
 
