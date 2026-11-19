@@ -53,6 +53,7 @@ import {createPager} from './Pager';
 import {downloadBlob} from './dom';
 import {handleError} from './index';
 import {hotkeys} from './Hotkeys';
+import {mapImage} from './MapImage';
 import {renderFrameTransfer} from './StudioFrames';
 import {renderPlayers} from './StudioPlayers';
 import {simplifySplines} from './splines';
@@ -235,6 +236,9 @@ export class Studio {
             mapButtons.appendChild(btnParallel);
             mapKey('p', 'Parallel tool', btnParallel);
         }
+        const grpImage = this.createImageDropdown();
+        mapButtons.appendChild(grpImage);
+        mapKey('i', 'Image menu', grpImage.querySelector('button'));
         hotkeys.register({
             action: () => {
                 const active = this.mapShowing ? mapButtons.querySelector<HTMLElement>('.btn.active') : null;
@@ -690,6 +694,51 @@ export class Studio {
             return btnToggleLayer;
         }));
         return {grpLayers, layers};
+    }
+
+    private createImageDropdown() {
+        // Save a picture of the map
+        const btnImage = document.createElement('button');
+        btnImage.id = 'btnImage';
+        btnImage.classList.add('btn', 'btn-secondary', 'dropdown-toggle');
+        btnImage.setAttribute('aria-expanded', 'false');
+        btnImage.setAttribute('data-bs-toggle', 'dropdown');
+        btnImage.replaceChildren(bootstrapIcon('bi-image', 'Save a picture of the map'), ' Image ');
+        const lstImage = document.createElement('ul');
+        lstImage.classList.add('dropdown-menu');
+        const grpImage = document.createElement('div');
+        grpImage.setAttribute('aria-labelledby', btnImage.id);
+        grpImage.classList.add('dropdown');
+        grpImage.replaceChildren(btnImage, lstImage);
+        const choices: [string, string, 'view' | 'whole' | 'svg', number][] = [
+            ['What is on screen', 'png', 'view', 2],
+            ['Whole map', 'png', 'whole', 4096],
+            ['Whole map, large', 'png', 'whole', 8192],
+            ['Whole map, as SVG', 'svg', 'svg', 4096],
+        ];
+        const base = this.originalFilename.replace(/\.sav$/i, '');
+        for (const [text, extension, kind, size] of choices) {
+            const btn = document.createElement('button');
+            btn.classList.add('dropdown-item');
+            btn.textContent = `${text} (${extension.toUpperCase()})`;
+            btn.addEventListener('click', () => {
+                this.setMapTitle('Making the image...');
+                const background = getComputedStyle(document.body).backgroundColor;
+                mapImage(this.map.getSvgNode(), {background, kind, size})
+                    .then((blob) => {
+                        downloadBlob(blob, `${base}-map.${extension}`);
+                        this.setMapTitle('Map');
+                    })
+                    .catch((e: unknown) => {
+                        console.log(e);
+                        this.setMapTitle(`No image was saved: ${e instanceof Error ? e.message : String(e)}`);
+                    });
+            });
+            const li = document.createElement('li');
+            li.appendChild(btn);
+            lstImage.appendChild(li);
+        }
+        return grpImage;
     }
 
     private createFrameLocatorToolDropdown() {

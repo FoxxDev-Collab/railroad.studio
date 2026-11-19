@@ -311,6 +311,11 @@ export class RailroadMap {
         return this.renderLock;
     }
 
+    /** The drawing itself, for making a picture of the map. */
+    getSvgNode(): SVGSVGElement {
+        return this.svg.node;
+    }
+
     refresh() {
         const pan = this.panZoom.getPan();
         const zoom = this.panZoom.getZoom();
