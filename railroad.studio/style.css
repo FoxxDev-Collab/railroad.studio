@@ -444,6 +444,34 @@ body.sidebar-collapsed {
   flex: 0 0 auto;
 }
 
+/* The panel that edits whatever was selected on the map */
+
+.map-inspector {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  z-index: 5;
+  width: min(24rem, calc(100% - 2rem));
+  max-height: calc(100% - 2rem);
+  overflow: auto;
+}
+
+.inspector-field + .inspector-field {
+  margin-top: 0.75rem;
+}
+
+.inspector-label {
+  margin-bottom: 0.15rem;
+  color: var(--bs-secondary-color);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.inspector-warning {
+  border-radius: var(--bs-border-radius-sm);
+  background: var(--bs-warning-bg-subtle);
+}
+
 /* The list of keyboard shortcuts */
 
 .hotkey-help {
@@ -984,6 +1012,28 @@ body.sidebar-collapsed {
 .prop-marker {
   fill: var(--spice-caliente);
   pointer-events: none;
+}
+
+/* With the edit tool, industries and prop labels can be clicked */
+
+.map-svg.tool-edit .industry,
+.map-svg.tool-edit .prop-marker,
+.map-svg.tool-edit .prop-label {
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.map-svg.tool-edit .industry:hover {
+  opacity: 0.7;
+}
+
+.industry.selected path {
+  stroke: var(--spice-caliente);
+  stroke-width: 60;
+}
+
+.prop-label.selected {
+  fill: var(--spice-caliente);
 }
 
 .prop-label {

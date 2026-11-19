@@ -9,7 +9,8 @@ import {
     hasCargoLimits,
     isCargoType,
 } from './frames';
-import {Frame, NumericFrameState, Prop, Quadruplet, Railroad, SplineType} from './Railroad';
+import {Field, Inspector, showInspector} from './StudioInspector';
+import {Frame, Industry, NumericFrameState, Prop, Quadruplet, Railroad, SplineType} from './Railroad';
 import {GvasString, GvasText, gvasToString} from './Gvas';
 import {
     IndustryName,
@@ -71,6 +72,9 @@ type PropRow = {
 
 type OnSort = (next: SortState | undefined) => void;
 
+/** What an edit to an industry affects: how it is drawn, where it is drawn, or neither. */
+type IndustryChange = 'type' | 'place' | 'other';
+
 /**
  * Read a text property for sorting or searching. Text in a format the editor
  * does not understand counts as blank.
@@ -92,6 +96,7 @@ function plainText(text: GvasText): GvasString {
 export class Studio {
     private modified: boolean;
     private unsaved = false;
+    private inspector: Inspector | undefined = undefined;
     private mapShowing = true;
     private mapStale = false;
     private mapTitle = 'Map';
@@ -200,6 +205,13 @@ export class Studio {
             mapKey('m', 'Measure tool', btnMeasure);
         }
         mapKey('x', 'Delete tool', btnDelete);
+        if (hasIndustries || hasProps) {
+            const btnEdit = this.createEditToolButton();
+            mapButtons.insertBefore(btnEdit, btnDelete);
+            mapKey('e', 'Edit tool', btnEdit);
+            this.map.onEditIndustry = (industry) => this.inspectIndustry(industry, mapDiv);
+            this.map.onEditProp = (index) => this.inspectProp(index, mapDiv);
+        }
         const grpTrees = this.createTreesDropdown();
         const btnTreeBrush = this.createTreeBrushToolButton();
         mapKey('b', 'Tree brush', btnTreeBrush);
@@ -241,13 +253,18 @@ export class Studio {
         mapKey('i', 'Image menu', grpImage.querySelector('button'));
         hotkeys.register({
             action: () => {
-                const active = this.mapShowing ? mapButtons.querySelector<HTMLElement>('.btn.active') : null;
+                if (!this.mapShowing) return false;
+                if (this.inspector) {
+                    this.inspector.close();
+                    return true;
+                }
+                const active = mapButtons.querySelector<HTMLElement>('.btn.active');
                 active?.click();
                 return Boolean(active);
             },
             group: 'Map',
             keys: 'escape',
-            name: 'Put the active tool away',
+            name: 'Close the edit panel, or put the active tool away',
         });
         hotkeys.register({
             action: () => {
@@ -976,6 +993,75 @@ export class Studio {
             }
         });
         return btnMeasure;
+    }
+
+    private createEditToolButton() {
+        // Edit tool: click something on the map to edit it there
+        const btnEdit = document.createElement('button');
+        btnEdit.classList.add('btn', 'btn-secondary');
+        btnEdit.replaceChildren(bootstrapIcon('bi-pencil-square', 'Edit Tool'), ' Edit ');
+        btnEdit.addEventListener('click', () => {
+            const toolEnabled = this.map.toggleEditTool();
+            btnEdit.classList.toggle('active', toolEnabled);
+            btnEdit.classList.toggle('btn-danger', toolEnabled);
+            btnEdit.classList.toggle('btn-secondary', !toolEnabled);
+            if (toolEnabled) {
+                this.setMapTitle('Select an industry or a prop label to edit');
+            } else {
+                this.inspector?.close();
+                this.setMapTitle('Map');
+            }
+        });
+        return btnEdit;
+    }
+
+    /**
+     * Open the edit panel for an industry that was clicked on the map.
+     * @param {Industry} industry
+     * @param {HTMLElement} container - The element the map is in.
+     */
+    private inspectIndustry(industry: Industry, container: HTMLElement): void {
+        this.inspector?.close();
+        const name = getIndustryName(industry);
+        let element = this.map.industryElement(industry);
+        element?.classList.add('selected');
+        const fields = this.industryFields(industry, (what) => {
+            if (what === 'other') return;
+            element = this.map.redrawIndustry(industry);
+            element.classList.add('selected');
+            // The labels of the inputs and outputs depend on the type, so start the panel over.
+            // Not right away: this is called from inside the editor that is being saved.
+            if (what === 'type') window.setTimeout(() => this.inspectIndustry(industry, container), 0);
+        });
+        const title = name === null ? String(industry.type) : industryNames[name];
+        this.inspector = showInspector(container, title, fields, () => {
+            element?.classList.remove('selected');
+            this.inspector = undefined;
+        });
+    }
+
+    /**
+     * Open the edit panel for a prop whose label was clicked on the map.
+     * @param {number} index
+     * @param {HTMLElement} container - The element the map is in.
+     */
+    private inspectProp(index: number, container: HTMLElement): void {
+        if (index < 0 || index >= this.railroad.props.length) return;
+        const prop = this.railroad.props[index];
+        this.inspector?.close();
+        const mark = (selected: boolean) => this.map.getSvgNode()
+            .querySelectorAll(`[data-prop="${index}"]`)
+            .forEach((e) => e.classList.toggle('selected', selected));
+        mark(true);
+        const fields = this.propFields(prop, () => {
+            this.map.redrawPropLabels();
+            mark(true);
+        });
+        const title = prop.name ? `Prop ${index}: ${prop.name}` : `Prop ${index}`;
+        this.inspector = showInspector(container, title, fields, () => {
+            mark(false);
+            this.inspector = undefined;
+        });
     }
 
     private createDeleteToolButton() {
@@ -1818,65 +1904,124 @@ export class Studio {
         for (const industry of industries) {
             tr = document.createElement('tr');
             tbody.appendChild(tr);
-            // Industry type
-            let td = document.createElement('td');
-            if (typeof industry.type === 'number') {
-                const setIndustryType = (type: IndustryType) => industry.type = type;
-                td.replaceChildren(editIndustryType(this, industry.type, setIndustryType));
-            } else {
-                const industryName = getIndustryName(industry);
-                if (industryName !== null) {
-                    const setIndustryName = (name: IndustryName) => industry.type = name;
-                    td.replaceChildren(editIndustryName(this, industryName, setIndustryName));
-                } else {
-                    const setIndustryName = (name: GvasString) => industry.type = name;
-                    td.replaceChildren(editString(this, industry.type, setIndustryName));
-                    td.classList.add('table-warning');
-                }
+            const fields = this.industryFields(industry, (what) => {
+                if (what !== 'other') this.map.redrawIndustry(industry);
+            });
+            for (const field of fields) {
+                const td = document.createElement('td');
+                td.appendChild(field.editor);
+                if (field.warning) td.classList.add('table-warning');
+                tr.appendChild(td);
             }
-            tr.appendChild(td);
-            // Inputs
-            td = document.createElement('td');
-            const setIndustryInputs = (inputs: number[]) => industry.inputs = inputs as Quadruplet<number>;
-            const industryName = getIndustryName(industry);
-            const defaultLabelsI: Quadruplet<string> = [
-                'Unknown Input Slot 1',
-                'Unknown Input Slot 2',
-                'Unknown Input Slot 3',
-                'Unknown Input Slot 4',
-            ];
-            const inputLabels = industryName ? industryInputLabels[industryName] ?? defaultLabelsI : defaultLabelsI;
-            td.appendChild(editIndustryProducts(this, 'Input', inputLabels, industry.inputs, setIndustryInputs));
-            if (inputLabels === defaultLabelsI && !industry.inputs.every((v) => v === 0)) {
-                td.classList.add('table-warning');
-            }
-            tr.appendChild(td);
-            // Outputs
-            td = document.createElement('td');
-            const setIndustryOutputs = (outputs: number[]) => industry.outputs = outputs as Quadruplet<number>;
-            const defaultLabelsO: Quadruplet<string> = [
-                'Unknown Output Slot 1',
-                'Unknown Output Slot 2',
-                'Unknown Output Slot 3',
-                'Unknown Output Slot 4',
-            ];
-            const outputLabels = industryName ? industryOutputLabels[industryName] ?? defaultLabelsO : defaultLabelsO;
-            td.appendChild(editIndustryProducts(this, 'Output', outputLabels, industry.outputs, setIndustryOutputs));
-            if (outputLabels === defaultLabelsO && !industry.outputs.every((v) => v === 0)) {
-                td.classList.add('table-warning');
-            }
-            tr.appendChild(td);
-            // Location
-            td = document.createElement('td');
-            const setIndustryLocation = (location: Vector) => industry.location = location;
-            td.replaceChildren(editVector(this, industry.location, setIndustryLocation));
-            tr.appendChild(td);
-            // Rotation
-            td = document.createElement('td');
-            const setIndustryRotation = (rotation: Rotator) => industry.rotation = rotation;
-            td.replaceChildren(editRotator(this, industry.rotation, setIndustryRotation));
-            tr.appendChild(td);
         }
+    }
+
+    /**
+     * The values of an industry, each with the control that edits it. The
+     * industries table and the map's edit panel both show these.
+     * @param {Industry} industry
+     * @param {function} onChange - Told what an edit affects, so the map can follow.
+     * @return {Field[]}
+     */
+    private industryFields(industry: Industry, onChange: (what: IndustryChange) => void): Field[] {
+        const industryName = getIndustryName(industry);
+        // Industry type
+        let type: Node;
+        if (typeof industry.type === 'number') {
+            type = editIndustryType(this, industry.type, (value: IndustryType) => {
+                industry.type = value;
+                onChange('type');
+                return value;
+            });
+        } else if (industryName !== null) {
+            type = editIndustryName(this, industryName, (value: IndustryName) => {
+                industry.type = value;
+                onChange('type');
+                return value;
+            });
+        } else {
+            type = editString(this, industry.type, (value: GvasString) => {
+                industry.type = value;
+                onChange('type');
+                return value;
+            });
+        }
+        // Inputs
+        const setIndustryInputs = (inputs: number[]) => industry.inputs = inputs as Quadruplet<number>;
+        const defaultLabelsI: Quadruplet<string> = [
+            'Unknown Input Slot 1',
+            'Unknown Input Slot 2',
+            'Unknown Input Slot 3',
+            'Unknown Input Slot 4',
+        ];
+        const inputLabels = industryName ? industryInputLabels[industryName] ?? defaultLabelsI : defaultLabelsI;
+        const inputs = editIndustryProducts(this, 'Input', inputLabels, industry.inputs, setIndustryInputs);
+        // Outputs
+        const setIndustryOutputs = (outputs: number[]) => industry.outputs = outputs as Quadruplet<number>;
+        const defaultLabelsO: Quadruplet<string> = [
+            'Unknown Output Slot 1',
+            'Unknown Output Slot 2',
+            'Unknown Output Slot 3',
+            'Unknown Output Slot 4',
+        ];
+        const outputLabels = industryName ? industryOutputLabels[industryName] ?? defaultLabelsO : defaultLabelsO;
+        const outputs = editIndustryProducts(this, 'Output', outputLabels, industry.outputs, setIndustryOutputs);
+        // Location
+        const location = editVector(this, industry.location, (value: Vector) => {
+            industry.location = value;
+            onChange('place');
+            return value;
+        });
+        // Rotation
+        const rotation = editRotator(this, industry.rotation, (value: Rotator) => {
+            industry.rotation = value;
+            onChange('place');
+            return value;
+        });
+        return [
+            {editor: type, label: 'Industry Type', warning: typeof industry.type !== 'number' && industryName === null},
+            {
+                editor: inputs,
+                label: 'Inputs',
+                warning: inputLabels === defaultLabelsI && !industry.inputs.every((v) => v === 0),
+            },
+            {
+                editor: outputs,
+                label: 'Outputs',
+                warning: outputLabels === defaultLabelsO && !industry.outputs.every((v) => v === 0),
+            },
+            {editor: location, label: 'Location'},
+            {editor: rotation, label: 'Rotation'},
+        ];
+    }
+
+    /**
+     * The values of a prop, each with the control that edits it. The props
+     * table and the map's edit panel both show these.
+     * @param {Prop} prop
+     * @param {function} onLabel - Called when what the map shows for the prop has changed.
+     * @return {Field[]}
+     */
+    private propFields(prop: Prop, onLabel: () => void): Field[] {
+        const name = editString(this, prop.name, (value: GvasString) => {
+            prop.name = value;
+            onLabel();
+            return value;
+        });
+        const location = editVector(this, prop.transform.translation, (value: Vector) => {
+            prop.transform.translation = value;
+            onLabel();
+            return value;
+        });
+        const setPropRotation = (rotation: Quaternion) => prop.transform.rotation = rotation;
+        const setPropScale = (scale: Vector) => prop.transform.scale3d = scale;
+        return [
+            {editor: name, label: 'Name'},
+            {editor: editText(this, prop.text, (text) => prop.text = text), label: 'Text'},
+            {editor: location, label: 'Location'},
+            {editor: editQuaternion(this, prop.transform.rotation, setPropRotation), label: 'Rotation'},
+            {editor: editVector(this, prop.transform.scale3d, setPropScale), label: 'Scale'},
+        ];
     }
 
     private props(table: HTMLTableElement, rows: PropRow[], sort: SortState | undefined, onSort: OnSort): void {
@@ -1906,37 +2051,18 @@ export class Studio {
             tr.appendChild(td);
             tbody.appendChild(tr);
         }
-        for (const {index: idx, prop} of rows) {
+        for (const {index, prop} of rows) {
             tr = document.createElement('tr');
             tbody.appendChild(tr);
             // ID
-            let td = document.createElement('td');
-            td.textContent = String(idx);
-            tr.appendChild(td);
-            // Name
-            td = document.createElement('td');
-            const setPropName = (name: GvasString): GvasString => prop.name = name;
-            td.appendChild(editString(this, prop.name, setPropName));
-            tr.appendChild(td);
-            // Text
-            td = document.createElement('td');
-            td.appendChild(editText(this, prop.text, (text) => prop.text = text));
-            tr.appendChild(td);
-            // Location
-            td = document.createElement('td');
-            const setPropLocation = (location: Vector): Vector => prop.transform.translation = location;
-            td.appendChild(editVector(this, prop.transform.translation, setPropLocation));
-            tr.appendChild(td);
-            // Rotation
-            td = document.createElement('td');
-            const setPropRotation = (rotation: Quaternion) => prop.transform.rotation = rotation;
-            td.replaceChildren(editQuaternion(this, prop.transform.rotation, setPropRotation));
-            tr.appendChild(td);
-            // Scale
-            td = document.createElement('td');
-            const setPropScale = (scale: Vector) => prop.transform.scale3d = scale;
-            td.replaceChildren(editVector(this, prop.transform.scale3d, setPropScale));
-            tr.appendChild(td);
+            const id = document.createElement('td');
+            id.textContent = String(index);
+            tr.appendChild(id);
+            for (const field of this.propFields(prop, () => this.map.redrawPropLabels())) {
+                const td = document.createElement('td');
+                td.appendChild(field.editor);
+                tr.appendChild(td);
+            }
         }
     }
 

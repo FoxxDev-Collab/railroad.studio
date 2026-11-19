@@ -56,6 +56,7 @@ enum MapToolMode {
     rerail,
     duplicate,
     measure,
+    edit,
 }
 
 type MapOptions = {
@@ -140,6 +141,10 @@ export class RailroadMap {
     private readonly layerVisibility = DEFAULT_LAYER_VISIBILITY;
     private readonly setMapModified;
     private readonly setTitle: (title: string) => void;
+    private readonly industryElements = new WeakMap<Industry, G[]>();
+    /** Called when something is clicked while the edit tool is active. */
+    onEditIndustry: ((industry: Industry) => void) | undefined = undefined;
+    onEditProp: ((index: number) => void) | undefined = undefined;
     private brush?: Circle | undefined;
     private locator?: Circle | undefined;
     private remainingTreesAppender?: (trees: Vector[]) => Promise<void>;
@@ -396,6 +401,42 @@ export class RailroadMap {
             }
             return true;
         }
+    }
+
+    toggleEditTool(): boolean {
+        if (this.toolMode === MapToolMode.edit) {
+            // Disable edit tool
+            this.toolMode = MapToolMode.pan_zoom;
+            this.svg.removeClass('tool-edit');
+            return false;
+        } else if (this.toolMode !== MapToolMode.pan_zoom) {
+            // Don't allow edit tool while another tool is active
+            return false;
+        } else {
+            // Enable edit tool
+            this.toolMode = MapToolMode.edit;
+            this.svg.addClass('tool-edit');
+            return true;
+        }
+    }
+
+    /**
+     * Draw an industry again, after it has been moved or its type has changed.
+     * @param {Industry} industry
+     * @return {SVGGElement} The element that now shows the industry.
+     */
+    redrawIndustry(industry: Industry): SVGGElement {
+        this.industryElements.get(industry)?.forEach((g) => g.remove());
+        return this.renderIndustry(industry)[0].node;
+    }
+
+    industryElement(industry: Industry): SVGGElement | undefined {
+        return this.industryElements.get(industry)?.[0].node;
+    }
+
+    /** Draw the prop labels again, after a prop has been moved or renamed. */
+    redrawPropLabels(): void {
+        if (this.layerVisibility.propLabels) this.renderPropLabels();
     }
 
     toggleDeleteTool(): boolean {
@@ -1138,6 +1179,10 @@ export class RailroadMap {
                     .addClass('frame-text');
                 this.gizmoDebugLine.plot(0, 0, x, y);
             });
+        g.on('click', () => {
+            if (this.toolMode === MapToolMode.edit) this.onEditIndustry?.(industry);
+        });
+        this.industryElements.set(industry, [g, gizmoG]);
         return [g, gizmoG];
     }
 
@@ -1173,11 +1218,16 @@ export class RailroadMap {
         const rotation = this.inverted ? 180 : 0;
         this.railroad.props.forEach((prop, index) => {
             const {x, y} = prop.transform.translation;
-            layer.circle(40).center(x, y).addClass('prop-marker');
+            layer.circle(40).center(x, y).attr('data-prop', index).addClass('prop-marker');
             layer
                 .plain(prop.name ? `${index} ${prop.name}` : String(index))
-                .attr({transform: makeTransform(x, y, rotation), x: 45})
+                .attr({'data-prop': index, 'transform': makeTransform(x, y, rotation), 'x': 45})
                 .addClass('prop-label');
+        });
+        // One listener for the layer, rather than one for each of thousands of props
+        layer.off('click').on('click', (e) => {
+            const index = e.target instanceof SVGElement ? e.target.dataset['prop'] : undefined;
+            if (this.toolMode === MapToolMode.edit && typeof index !== 'undefined') this.onEditProp?.(Number(index));
         });
     }
 
