@@ -8,6 +8,8 @@ export type Hotkey = {
     /** Modifiers, then the key, in lower case and separated by spaces: 'd', 'ctrl s', 'escape'. */
     keys: string;
     name: string;
+    /** Set to false for a shortcut that a text field has its own meaning for, such as undo. */
+    whileTyping?: boolean | undefined;
 };
 
 const keyLabels: Record<string, string> = {
@@ -54,9 +56,10 @@ export class HotkeyManager {
             if (e.repeat || e.isComposing) return;
             const command = this.commands.get(eventKeys(e));
             if (!command) return;
-            // A plain key belongs to whatever is being typed into. Shortcuts with Ctrl work there too.
+            // A plain key belongs to whatever is being typed into. Shortcuts with Ctrl work there too,
+            // unless the field has its own use for them.
             const plain = !e.altKey && !e.ctrlKey && !e.metaKey;
-            if (plain && isTyping(e.target)) return;
+            if ((plain || command.whileTyping === false) && isTyping(e.target)) return;
             // An open dialog, such as the shortcut list, has the keyboard to itself
             if (document.querySelector('dialog[open]')) return;
             if (command.action()) e.preventDefault();

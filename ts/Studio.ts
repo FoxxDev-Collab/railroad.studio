@@ -38,12 +38,14 @@ import {
 } from './StudioEditor';
 import {MapLayers, RailroadMap} from './RailroadMap';
 import {SectionHandler, SectionKey, Sidebar, showDownloadNotice} from './StudioShell';
+import {Snapshot, applySnapshot, takeSnapshot} from './Snapshots';
 import {SortState, sortRows, sortableHeader} from './TableSort';
 import {cubicBezierMinRadius, hermiteToBezier} from './util-bezier';
 import {gvasToBlob, railroadToGvas} from './exporter';
 import {Quaternion} from './Quaternion';
 import {Rotator} from './Rotator';
 import {SplineTrackType} from './SplineTrackType';
+import {UndoHistory} from './UndoHistory';
 import {Vector} from './Vector';
 import {VegetationUtil} from './VegetationUtil';
 import {calculateSteepestGrade} from './Grade';
@@ -59,6 +61,11 @@ import {renderFrameTransfer} from './StudioFrames';
 import {renderPlayers} from './StudioPlayers';
 import {simplifySplines} from './splines';
 import {textToString} from './util';
+
+/** How many changes can be undone. Each one holds a copy of whatever it changed. */
+const UNDO_LIMIT = 30;
+/** Edits that come this close together, such as a brush stroke or typing, are undone as one. */
+const UNDO_QUIET_MS = 300;
 
 const OLDEST_TESTED_SAVE_GAME_VERSION = 1;
 const NEWEST_TESTED_SAVE_GAME_VERSION = 231117;
@@ -97,6 +104,9 @@ export class Studio {
     private modified: boolean;
     private unsaved = false;
     private inspector: Inspector | undefined = undefined;
+    private readonly undoHistory = new UndoHistory(UNDO_LIMIT);
+    private undoSnapshot: Snapshot | undefined = undefined;
+    private undoTimer = 0;
     private mapShowing = true;
     private mapStale = false;
     private mapTitle = 'Map';
@@ -488,6 +498,25 @@ export class Studio {
         sidebar.setFile(this.originalFilename, 'Save file');
         sidebar.setSections(sections, () => this.download());
         sidebar.setSaveState('clean');
+        // Undo
+        this.undoSnapshot = takeSnapshot(railroad);
+        this.syncHistory();
+        hotkeys.register({
+            action: () => this.undo(),
+            group: 'General',
+            keys: 'ctrl z',
+            name: 'Undo',
+            whileTyping: false,
+        });
+        for (const keys of ['ctrl y', 'ctrl shift z']) {
+            hotkeys.register({
+                action: () => this.redo(),
+                group: 'General',
+                keys,
+                name: 'Redo',
+                whileTyping: false,
+            });
+        }
         // Studio controls
         const studioControls = document.createElement('div');
         studioControls.classList.add('studio-controls');
@@ -1367,6 +1396,71 @@ export class Studio {
         if (affectsSplines) {
             this.logRadiusGrade();
         }
+        // Record an undo step once the edits stop coming
+        window.clearTimeout(this.undoTimer);
+        this.undoTimer = window.setTimeout(() => this.recordUndoStep(), UNDO_QUIET_MS);
+    }
+
+    /**
+     * Add an undo step for whatever has changed since the last one. Every edit
+     * ends in setMapModified, so comparing the railroad with the last copy of
+     * it covers all of them without each editor having to describe its change.
+     */
+    private recordUndoStep(): void {
+        window.clearTimeout(this.undoTimer);
+        this.undoTimer = 0;
+        const before = this.undoSnapshot;
+        const after = takeSnapshot(this.railroad, before);
+        if (!before || !after) return;
+        this.undoSnapshot = after;
+        this.undoHistory.add({
+            redo: () => this.restoreSnapshot(after),
+            undo: () => this.restoreSnapshot(before),
+        });
+        this.syncHistory();
+    }
+
+    private restoreSnapshot(snapshot: Snapshot): boolean {
+        applySnapshot(this.railroad, snapshot);
+        this.undoSnapshot = snapshot;
+        // Everything on screen was built from the data that has just been replaced
+        this.inspector?.close();
+        this.sidebar.setCount('frames', this.railroad.frames.length);
+        this.sidebar.setCount('industries', this.railroad.industries.length);
+        this.sidebar.setCount('players', this.railroad.players.length);
+        this.sidebar.setCount('props', this.railroad.props.length);
+        this.sidebar.setCount('splineTracks', this.railroad.splineTracks.length);
+        this.refreshMap();
+        this.sidebar.reselect();
+        // This is a change to the save like any other. It matches the snapshot, so it adds no undo step.
+        this.setMapModified();
+        return true;
+    }
+
+    private syncHistory(): void {
+        this.sidebar.setHistory({
+            canRedo: this.undoHistory.canRedo(),
+            canUndo: this.undoHistory.canUndo(),
+            onRedo: () => this.redo(),
+            onUndo: () => this.undo(),
+        });
+    }
+
+    undo(): boolean {
+        // An edit made a moment ago may not have its step yet
+        if (this.undoTimer) this.recordUndoStep();
+        if (!this.undoHistory.canUndo()) return false;
+        const done = this.undoHistory.undo();
+        this.syncHistory();
+        return done;
+    }
+
+    redo(): boolean {
+        if (this.undoTimer) this.recordUndoStep();
+        if (!this.undoHistory.canRedo()) return false;
+        const done = this.undoHistory.redo();
+        this.syncHistory();
+        return done;
     }
 
     private lastLoggedRadius = Infinity;

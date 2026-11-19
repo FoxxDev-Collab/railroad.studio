@@ -55,6 +55,12 @@ type Snapshot = {
 
 /** The values each player had when the save was loaded, used for undo and for the "Edited" badge. */
 const snapshots = new WeakMap<Player, Snapshot>();
+/**
+ * The same values by position in the list. An undo of the whole save replaces
+ * every player with a copy, and a copy has to keep the original values of the
+ * player it stands for.
+ */
+const originals: Snapshot[] = [];
 
 /** How the cards are ordered. Kept between visits to the page. */
 let playerSort: SortState | undefined;
@@ -463,9 +469,10 @@ function playerCard(
  */
 export function renderPlayers(studio: Studio, container: HTMLElement): void {
     const {players, settings} = studio.railroad;
-    for (const player of players) {
-        if (!snapshots.has(player)) snapshots.set(player, takeSnapshot(player));
-    }
+    players.forEach((player, i) => {
+        if (i >= originals.length) originals.push(takeSnapshot(player));
+        snapshots.set(player, originals[i]);
+    });
     const permissionCount = Math.max(0, ...players.map((p) => p.permissions?.values.length ?? 0));
     const page = el('div', 'players-page');
     const onChange = () => {

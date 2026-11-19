@@ -35,9 +35,20 @@ export type SectionHandler = {
 
 export type SaveState = 'none' | 'clean' | 'unsaved' | 'downloaded';
 
+export type HistoryState = {
+    canRedo: boolean;
+    canUndo: boolean;
+    onRedo: () => void;
+    onUndo: () => void;
+};
+
 export type Sidebar = {
+    /** Show the current section again, after what it shows has changed underneath it. */
+    reselect: () => void;
     /** Update the number shown beside a section, after its contents change. */
     setCount: (key: SectionKey, count: number) => void;
+    /** Say whether there is anything to undo or redo, and what does it. */
+    setHistory: (state: HistoryState) => void;
     /** Show which file is open, or that none is. */
     setFile: (name: string | undefined, detail: string, busy?: boolean) => void;
     setSaveState: (state: SaveState) => void;
@@ -221,12 +232,33 @@ export function mountSidebar(): Sidebar {
         handler.count = count;
         syncSections(true);
     };
+    const reselect = () => {
+        const key = sectionOrder.find((k) => sectionLinks.get(k)?.classList.contains('active'));
+        if (key) handlers[key]?.onSelect();
+    };
     // Save state and download
     const foot = el('div', 'sidebar-foot');
     const state = el('div', 'sidebar-state small');
     state.setAttribute('role', 'status');
     const stateText = el('span', 'sidebar-label');
     state.append(el('span', 'sidebar-state-dot'), stateText);
+    // Undo and redo
+    const history = el('div', 'sidebar-history');
+    const undo = sidebarButton('btn btn-sm btn-quiet', 'bi-arrow-counterclockwise', 'Undo');
+    const redo = sidebarButton('btn btn-sm btn-quiet', 'bi-arrow-clockwise', 'Redo');
+    undo.title = 'Undo (Ctrl+Z)';
+    redo.title = 'Redo (Ctrl+Y)';
+    undo.disabled = true;
+    redo.disabled = true;
+    let historyState: HistoryState | undefined;
+    undo.addEventListener('click', () => historyState?.onUndo());
+    redo.addEventListener('click', () => historyState?.onRedo());
+    history.append(undo, redo);
+    const setHistory = (next: HistoryState) => {
+        historyState = next;
+        undo.disabled = !next.canUndo;
+        redo.disabled = !next.canRedo;
+    };
     const download = sidebarButton('btn btn-secondary sidebar-download', 'bi-download', 'Download save');
     let onDownload: (() => void) | undefined;
     download.addEventListener('click', () => onDownload?.());
@@ -276,14 +308,14 @@ export function mountSidebar(): Sidebar {
     github.setAttribute('aria-label', github.title);
     github.append(icon('bi-github'));
     extras.append(theme, shortcuts, github);
-    foot.append(state, download, extras);
+    foot.append(state, history, download, extras);
     // Start out with no save open
     setFile(undefined, 'Open a .sav file to begin');
     syncSections(false);
     select(open);
     setSaveState('none');
     element.replaceChildren(head, file, list, foot);
-    return {setCount, setFile, setSaveState, setSections};
+    return {reselect, setCount, setFile, setHistory, setSaveState, setSections};
 }
 
 /**
