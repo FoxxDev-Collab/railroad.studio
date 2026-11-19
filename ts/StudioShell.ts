@@ -1,4 +1,5 @@
 import {el, icon} from './dom';
+import {hotkeys} from './Hotkeys';
 import {toggleDarkMode} from './themes';
 
 const COLLAPSED_KEY = 'rs.sidebar-collapsed';
@@ -110,6 +111,24 @@ export function mountSidebar(): Sidebar {
         syncToggle();
     });
     syncToggle();
+    hotkeys.register({
+        action: () => {
+            toggle.click();
+            return true;
+        },
+        group: 'General',
+        keys: '[',
+        name: 'Collapse or expand the sidebar',
+    });
+    hotkeys.register({
+        action: () => {
+            hotkeys.showHelp();
+            return true;
+        },
+        group: 'General',
+        keys: '?',
+        name: 'Show this list',
+    });
     head.append(toggle, el('span', 'sidebar-brand sidebar-label', 'Railroad Studio'));
     // Which save is open
     const file = el('div', 'sidebar-file');
@@ -156,7 +175,7 @@ export function mountSidebar(): Sidebar {
     const sectionLinks = new Map<SectionKey, HTMLButtonElement>();
     const countFormat = new Intl.NumberFormat('en-US');
     let handlers: Partial<Record<SectionKey, SectionHandler>> = {};
-    for (const key of sectionOrder) {
+    sectionOrder.forEach((key, i) => {
         const info = sections[key];
         const link = sidebarButton('nav-link', info.icon, info.label);
         link.append(el('span', 'sidebar-label sidebar-count'));
@@ -168,7 +187,18 @@ export function mountSidebar(): Sidebar {
         });
         sectionLinks.set(key, link);
         addLink(link);
-    }
+        // The number keys open the sections, in the order they are listed
+        hotkeys.register({
+            action: () => {
+                if (link.disabled) return false;
+                link.click();
+                return true;
+            },
+            group: 'Sections',
+            keys: String(i + 1),
+            name: info.label,
+        });
+    });
     const syncSections = (loaded: boolean) => {
         for (const key of sectionOrder) {
             const info = sections[key];
@@ -179,7 +209,7 @@ export function mountSidebar(): Sidebar {
             link.disabled = !handler;
             count.textContent = typeof handler?.count === 'undefined' ? '' : countFormat.format(handler.count);
             if (handler) {
-                link.title = `${info.label} — ${info.hint}`;
+                link.title = `${info.label} — ${info.hint} (${sectionOrder.indexOf(key) + 1})`;
             } else {
                 link.title = loaded ? `${info.label} — none in this save` : `${info.label} — open a save first`;
             }
@@ -226,16 +256,26 @@ export function mountSidebar(): Sidebar {
     };
     // Everything else
     const extras = el('div', 'sidebar-extras');
-    const theme = sidebarButton('btn btn-sm btn-quiet', 'bi-moon-stars', 'Theme');
-    theme.title = 'Toggle dark mode';
+    const extra = (iconName: string, title: string) => {
+        const button = el('button', 'btn btn-sm btn-quiet');
+        button.type = 'button';
+        button.title = title;
+        button.setAttribute('aria-label', title);
+        button.append(icon(iconName));
+        return button;
+    };
+    const theme = extra('bi-moon-stars', 'Toggle dark mode');
     theme.addEventListener('click', toggleDarkMode);
+    const shortcuts = extra('bi-keyboard', 'Keyboard shortcuts (?)');
+    shortcuts.addEventListener('click', () => hotkeys.showHelp());
     const github = el('a', 'btn btn-sm btn-quiet');
     github.href = GITHUB_URL;
     github.target = '_blank';
     github.rel = 'noopener noreferrer';
     github.title = 'Railroad Studio on GitHub';
-    github.append(icon('bi-github'), el('span', 'sidebar-label', 'GitHub'));
-    extras.append(theme, github);
+    github.setAttribute('aria-label', github.title);
+    github.append(icon('bi-github'));
+    extras.append(theme, shortcuts, github);
     foot.append(state, download, extras);
     // Start out with no save open
     setFile(undefined, 'Open a .sav file to begin');

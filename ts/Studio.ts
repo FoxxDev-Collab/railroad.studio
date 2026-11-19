@@ -52,6 +52,7 @@ import {createFilter} from './Filter';
 import {createPager} from './Pager';
 import {downloadBlob} from './dom';
 import {handleError} from './index';
+import {hotkeys} from './Hotkeys';
 import {renderFrameTransfer} from './StudioFrames';
 import {renderPlayers} from './StudioPlayers';
 import {simplifySplines} from './splines';
@@ -160,23 +161,47 @@ export class Studio {
         // Map toolbar
         const mapButtons = document.createElement('div');
         mapButtons.classList.add('hstack', 'gap-2');
+        // A map tool's shortcut presses the tool's own button, so the two cannot disagree
+        const mapKey = (keys: string, name: string, button: HTMLElement | null) => {
+            if (!button) return;
+            button.title = `${name} (${keys.toUpperCase()})`;
+            hotkeys.register({
+                action: () => {
+                    if (!this.mapShowing) return false;
+                    button.click();
+                    return true;
+                },
+                group: 'Map',
+                keys,
+                name,
+            });
+        };
         const btnDelete = this.createDeleteToolButton();
         const {grpLayers, layers} = this.createLayersDropdown();
         mapButtons.replaceChildren(
             grpLayers,
             btnDelete,
         );
+        mapKey('l', 'Layers menu', grpLayers.querySelector('button'));
         if (hasFrames) {
             // Enable tools that work on frames
+            const btnRerail = this.createRerailToolButton();
+            const btnDuplicate = this.createDuplicateFrameToolButton();
+            const btnMeasure = this.createMeasureFrameToolButton();
             [
                 this.createFrameLocatorToolDropdown(),
-                this.createRerailToolButton(),
-                this.createDuplicateFrameToolButton(),
-                this.createMeasureFrameToolButton(),
+                btnRerail,
+                btnDuplicate,
+                btnMeasure,
             ].forEach((e) => mapButtons.insertBefore(e, btnDelete));
+            mapKey('r', 'Rerail tool', btnRerail);
+            mapKey('d', 'Duplicate tool', btnDuplicate);
+            mapKey('m', 'Measure tool', btnMeasure);
         }
+        mapKey('x', 'Delete tool', btnDelete);
         const grpTrees = this.createTreesDropdown();
         const btnTreeBrush = this.createTreeBrushToolButton();
+        mapKey('b', 'Tree brush', btnTreeBrush);
         if (!this.railroad.settings.gameLevelName && this.railroad.vegetation.length === 0) {
             // Enable legacy tree tools based on railroad.removedVegetationAssets
             [
@@ -191,23 +216,44 @@ export class Studio {
         }
         if (hasSplines) {
             // Enable tools that only work for old splines
+            const btnFlatten = this.createFlattenSplineToolButton();
             [
-                this.createFlattenSplineToolButton(),
+                btnFlatten,
                 this.createMinimizeSegmentCountConfigDropdown(),
             ].forEach((e) => mapButtons.appendChild(e));
+            mapKey('f', 'Flatten tool', btnFlatten);
         }
         if (hasSplineTracks) {
             // Enable tools that only work for new splines
-            [
-                this.createCircularizeSplineToolButton(),
-            ].forEach((e) => mapButtons.appendChild(e));
+            const btnCircularize = this.createCircularizeSplineToolButton();
+            mapButtons.appendChild(btnCircularize);
+            mapKey('c', 'Circularize tool', btnCircularize);
         }
         if (hasSplines || hasSplineTracks) {
             // Enable tools that work for any splines
-            [
-                this.createParallelSplineToolButton(),
-            ].forEach((e) => mapButtons.appendChild(e));
+            const btnParallel = this.createParallelSplineToolButton();
+            mapButtons.appendChild(btnParallel);
+            mapKey('p', 'Parallel tool', btnParallel);
         }
+        hotkeys.register({
+            action: () => {
+                const active = this.mapShowing ? mapButtons.querySelector<HTMLElement>('.btn.active') : null;
+                active?.click();
+                return Boolean(active);
+            },
+            group: 'Map',
+            keys: 'escape',
+            name: 'Put the active tool away',
+        });
+        hotkeys.register({
+            action: () => {
+                this.download();
+                return true;
+            },
+            group: 'General',
+            keys: 'ctrl s',
+            name: 'Download the save',
+        });
         // Frames
         let framePage = 0;
         let frameSort: SortState | undefined;
