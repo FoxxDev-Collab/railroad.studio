@@ -510,6 +510,10 @@ export class Studio {
                 name: 'Props',
             },
             {
+                key: 'propLabels',
+                name: 'Prop IDs',
+            },
+            {
                 key: 'industries',
                 name: 'Industries',
             },
@@ -567,7 +571,7 @@ export class Studio {
             layers = layers.filter((layer) => layer.key !== 'players');
         }
         if (!hasProps) {
-            layers = layers.filter((layer) => layer.key !== 'props');
+            layers = layers.filter((layer) => layer.key !== 'props' && layer.key !== 'propLabels');
         }
         if (!hasSplines) {
             // Hide layers that only apply to old splines

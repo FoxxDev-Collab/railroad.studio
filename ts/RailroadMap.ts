@@ -81,6 +81,7 @@ export type MapLayers = {
     industries: G;
     locator: G;
     players: G;
+    propLabels: G;
     props: G;
     radius: G;
     radiusSwitch: G;
@@ -106,6 +107,7 @@ const DEFAULT_LAYER_VISIBILITY: MapLayerVisibility = {
     industries: true,
     locator: false,
     players: false,
+    propLabels: false,
     props: false,
     radius: false,
     radiusSwitch: false,
@@ -350,6 +352,7 @@ export class RailroadMap {
         this.railroad.industries.forEach(this.renderIndustry, this);
         this.railroad.players.forEach(this.renderPlayer, this);
         this.railroad.props.forEach(this.renderProp, this);
+        if (this.layerVisibility.propLabels) this.renderPropLabels();
         this.railroad.turntables.forEach(this.renderTurntable, this);
         this.renderSwitches();
         await this.renderSplines();
@@ -435,6 +438,8 @@ export class RailroadMap {
             this.layers[layer].show();
             if (layer === 'trees') {
                 this.renderTrees();
+            } else if (layer === 'propLabels') {
+                this.renderPropLabels();
             }
         } else {
             this.layers[layer].hide();
@@ -703,10 +708,12 @@ export class RailroadMap {
             radiusSwitch,
             gizmo,
             players,
+            propLabels,
             trees,
             brush,
             locator,
         ] = [
+            group.group(),
             group.group(),
             group.group(),
             group.group(),
@@ -743,6 +750,7 @@ export class RailroadMap {
             industries,
             locator,
             players,
+            propLabels,
             props,
             radius,
             radiusSwitch,
@@ -1142,6 +1150,25 @@ export class RailroadMap {
             .text(gvasToString(string))
             .attr('transform', makeTransform(prop.transform.translation.x, prop.transform.translation.y, rotation))
             .addClass('prop');
+    }
+
+    /**
+     * Mark every prop with its ID and name, so it can be found in the props
+     * table. There can be thousands of props, so this is only drawn while the
+     * layer is switched on, and redrawn each time it is.
+     */
+    private renderPropLabels() {
+        const layer = this.layers.propLabels;
+        layer.clear();
+        const rotation = this.inverted ? 180 : 0;
+        this.railroad.props.forEach((prop, index) => {
+            const {x, y} = prop.transform.translation;
+            layer.circle(40).center(x, y).addClass('prop-marker');
+            layer
+                .plain(prop.name ? `${index} ${prop.name}` : String(index))
+                .attr({transform: makeTransform(x, y, rotation), x: 45})
+                .addClass('prop-label');
+        });
     }
 
     private renderSwitchLeg(sw: Switch, yawOffset: number) {
